@@ -1,0 +1,26 @@
+{
+  "name": "capex-gantt-monorepo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "dev": "turbo run dev",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "turbo run build && changeset publish"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.16",
+    "@changesets/cli": "2.31.0",
+    "turbo": "2.9.18",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
+  },
+  "packageManager": "pnpm@11.5.3",
+  "engines": {
+    "node": ">=20"
+  }
+}
