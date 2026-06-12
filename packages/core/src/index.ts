@@ -13,6 +13,7 @@ export { buildGraph } from './scheduling/graph.js';
 export type {
   Calendar,
   CalendarException,
+  ConstraintType,
   CreateProjectInput,
   DateInput,
   Dependency,

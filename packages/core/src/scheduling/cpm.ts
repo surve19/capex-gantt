@@ -36,14 +36,6 @@ export function runCpm(project: Project): CpmResult {
     return calendar;
   };
 
-  for (const dependency of dependencies) {
-    if (dependency.type !== 'FS') {
-      throw new Error(
-        `Dependency "${dependency.id}" has unsupported type "${dependency.type}". Phase 1 only supports "FS" dependencies.`,
-      );
-    }
-  }
-
   const { predecessors, successors, topoOrder } = buildGraph(tasks, dependencies);
   const taskById = new Map(tasks.map((t) => [t.id, t]));
 
@@ -61,20 +53,74 @@ export function runCpm(project: Project): CpmResult {
     if (!task) continue;
     const calendar = resolveCalendar(task);
     const preds = predecessors.get(id) ?? [];
+    const durationHours = task.durationHours;
+    const constraint = task.constraint;
 
-    let earlyStart = projectStart;
+    const candidates: Date[] = [projectStart];
     for (const { dependency, task: predecessorTask } of preds) {
       const lag = dependency.lagHours ?? 0;
-      const predecessorFinish = predecessorTask.earlyFinish;
-      if (!predecessorFinish) continue;
-      const candidate = addWorkingHours(calendar, predecessorFinish, lag);
-      earlyStart = maxDate(earlyStart, candidate);
+      if (!predecessorTask.earlyFinish || !predecessorTask.earlyStart) continue;
+
+      switch (dependency.type) {
+        case 'FS':
+          candidates.push(addWorkingHours(calendar, predecessorTask.earlyFinish, lag));
+          break;
+        case 'SS':
+          candidates.push(addWorkingHours(calendar, predecessorTask.earlyStart, lag));
+          break;
+        case 'FF': {
+          const finishCandidate = addWorkingHours(calendar, predecessorTask.earlyFinish, lag);
+          candidates.push(
+            durationHours <= 0
+              ? finishCandidate
+              : addWorkingHours(calendar, finishCandidate, -durationHours),
+          );
+          break;
+        }
+        case 'SF': {
+          const finishCandidate = addWorkingHours(calendar, predecessorTask.earlyStart, lag);
+          candidates.push(
+            durationHours <= 0
+              ? finishCandidate
+              : addWorkingHours(calendar, finishCandidate, -durationHours),
+          );
+          break;
+        }
+      }
     }
 
-    const earlyFinish =
-      task.durationHours <= 0
-        ? earlyStart
-        : addWorkingHours(calendar, earlyStart, task.durationHours);
+    let earlyStart = candidates.reduce(maxDate);
+
+    // Apply this task's own constraint (forward-pass side). FNET is handled
+    // below after earlyFinish is computed; SNLT/FNLT/ALAP are handled in the
+    // backward pass.
+    if (constraint) {
+      switch (constraint.type) {
+        case 'SNET':
+          earlyStart = maxDate(earlyStart, constraint.date);
+          break;
+        case 'MSO':
+          earlyStart = constraint.date;
+          break;
+        case 'MFO':
+          earlyStart =
+            durationHours <= 0
+              ? constraint.date
+              : addWorkingHours(calendar, constraint.date, -durationHours);
+          break;
+        default:
+          break;
+      }
+    }
+
+    let earlyFinish =
+      durationHours <= 0 ? earlyStart : addWorkingHours(calendar, earlyStart, durationHours);
+
+    if (constraint?.type === 'FNET' && earlyFinish < constraint.date) {
+      earlyFinish = constraint.date;
+      earlyStart =
+        durationHours <= 0 ? earlyFinish : addWorkingHours(calendar, earlyFinish, -durationHours);
+    }
 
     task.earlyStart = earlyStart;
     task.earlyFinish = earlyFinish;
@@ -95,26 +141,90 @@ export function runCpm(project: Project): CpmResult {
     if (!task) continue;
     const calendar = resolveCalendar(task);
     const succs = successors.get(id) ?? [];
+    const durationHours = task.durationHours;
+    const constraint = task.constraint;
 
-    let lateFinish = projectFinish;
+    const candidates: Date[] = [projectFinish];
     for (const { dependency, task: successorTask } of succs) {
       const lag = dependency.lagHours ?? 0;
-      const successorStart = successorTask.lateStart;
-      if (!successorStart) continue;
-      const candidate = addWorkingHours(calendar, successorStart, -lag);
-      lateFinish = minDate(lateFinish, candidate);
+      if (!successorTask.lateStart || !successorTask.lateFinish) continue;
+
+      switch (dependency.type) {
+        case 'FS':
+          candidates.push(addWorkingHours(calendar, successorTask.lateStart, -lag));
+          break;
+        case 'FF':
+          candidates.push(addWorkingHours(calendar, successorTask.lateFinish, -lag));
+          break;
+        case 'SS': {
+          const startCandidate = addWorkingHours(calendar, successorTask.lateStart, -lag);
+          candidates.push(
+            durationHours <= 0
+              ? startCandidate
+              : addWorkingHours(calendar, startCandidate, durationHours),
+          );
+          break;
+        }
+        case 'SF': {
+          const startCandidate = addWorkingHours(calendar, successorTask.lateFinish, -lag);
+          candidates.push(
+            durationHours <= 0
+              ? startCandidate
+              : addWorkingHours(calendar, startCandidate, durationHours),
+          );
+          break;
+        }
+      }
     }
 
-    const lateStart =
-      task.durationHours <= 0
-        ? lateFinish
-        : addWorkingHours(calendar, lateFinish, -task.durationHours);
+    let lateFinish = candidates.reduce(minDate);
+
+    // Apply this task's own constraint (backward-pass side). SNLT is handled
+    // below after lateStart is computed.
+    if (constraint) {
+      switch (constraint.type) {
+        case 'FNLT':
+          lateFinish = minDate(lateFinish, constraint.date);
+          break;
+        case 'MFO':
+          lateFinish = constraint.date;
+          break;
+        case 'MSO':
+          lateFinish =
+            durationHours <= 0
+              ? constraint.date
+              : addWorkingHours(calendar, constraint.date, durationHours);
+          break;
+        default:
+          break;
+      }
+    }
+
+    let lateStart =
+      durationHours <= 0 ? lateFinish : addWorkingHours(calendar, lateFinish, -durationHours);
+
+    if (constraint?.type === 'SNLT' && lateStart > constraint.date) {
+      lateStart = constraint.date;
+      lateFinish =
+        durationHours <= 0 ? lateStart : addWorkingHours(calendar, lateStart, durationHours);
+    }
 
     task.lateStart = lateStart;
     task.lateFinish = lateFinish;
     task.totalFloatHours = task.earlyStart
       ? diffWorkingHours(calendar, task.earlyStart, lateStart)
       : 0;
+  }
+
+  // ALAP: after both passes complete, override start/end with the late dates
+  // for ALAP-constrained tasks. earlyStart/earlyFinish/totalFloatHours/isCritical
+  // remain ASAP-based, so start/end intentionally diverge from
+  // earlyStart/earlyFinish for ALAP tasks.
+  for (const task of tasks) {
+    if (task.constraint?.type === 'ALAP' && task.lateStart && task.lateFinish) {
+      task.start = task.lateStart;
+      task.end = task.lateFinish;
+    }
   }
 
   return { tasks, projectFinish };

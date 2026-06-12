@@ -47,14 +47,35 @@ export interface Task {
   totalFloatHours?: number;
   /** True when totalFloatHours === 0. */
   isCritical?: boolean;
+
+  /** Optional scheduling constraint. Omitted/ASAP = unconstrained (default CPM behavior). */
+  constraint?: { type: ConstraintType; date: Date };
+  /** True when totalFloatHours < 0, or an MSO/MFO constraint's date doesn't match
+   *  the computed early start/finish. Computed by the scheduler. */
+  isConstraintViolated?: boolean;
 }
+
+/**
+ * Scheduling constraint applied to a task:
+ * - `ASAP`: as soon as possible (default, unconstrained CPM behavior).
+ * - `ALAP`: as late as possible. After both CPM passes complete, the task's
+ *   `start`/`end` are set to `lateStart`/`lateFinish` (overriding the
+ *   forward-pass values), while `earlyStart`/`earlyFinish`/`totalFloatHours`/
+ *   `isCritical` remain ASAP-based.
+ * - `MSO` / `MFO`: must start on / must finish on `constraint.date` (hard
+ *   override of the forward-pass `earlyStart`/`earlyFinish`).
+ * - `SNET` / `SNLT`: start no earlier than / start no later than
+ *   `constraint.date`.
+ * - `FNET` / `FNLT`: finish no earlier than / finish no later than
+ *   `constraint.date`.
+ */
+export type ConstraintType = 'ASAP' | 'ALAP' | 'MSO' | 'MFO' | 'SNET' | 'SNLT' | 'FNET' | 'FNLT';
 
 /**
  * Dependency relationship type between two tasks.
  *
- * Phase 1 only implements 'FS' (finish-to-start); the other variants are
- * included now so the type and validation surface won't need to change
- * shape when SS/FF/SF support is added.
+ * All four types (`FS`/`SS`/`FF`/`SF`) are supported by the CPM forward/backward
+ * pass, each with optional `lagHours`.
  */
 export type DependencyType = 'FS' | 'SS' | 'FF' | 'SF';
 
@@ -62,7 +83,6 @@ export interface Dependency {
   id: string;
   predecessorId: string;
   successorId: string;
-  /** Phase 1 only supports 'FS'. Other values are rejected by `createProject`. */
   type: DependencyType;
   /** Lag in working hours. Negative values represent lead (overlap). Defaults to 0. */
   lagHours?: number;

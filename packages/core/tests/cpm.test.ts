@@ -150,4 +150,238 @@ describe('CPM forward/backward pass', () => {
     expect(a.isCritical).toBe(true);
     expect(b.isCritical).toBe(true);
   });
+
+  it('applies a start-to-start dependency with lag', () => {
+    // A(16h) -[SS, lag=8h]-> B(8h)
+    const project = createProject({
+      id: 'p5',
+      name: 'SS Project',
+      startDate: START_DATE,
+      tasks: [
+        { id: 'A', name: 'A', durationHours: 16 },
+        { id: 'B', name: 'B', durationHours: 8 },
+      ],
+      dependencies: [{ id: 'd1', predecessorId: 'A', successorId: 'B', type: 'SS', lagHours: 8 }],
+    });
+
+    const result = project.schedule();
+    const byId = new Map(result.tasks.map((t) => [t.id, t]));
+    const b = byId.get('B') as Task;
+
+    const mon08 = new Date(2024, 0, 1, 8, 0, 0);
+    const tue08 = new Date(2024, 0, 2, 8, 0, 0);
+
+    // B's earlyStart = SS(A.earlyStart=Mon00:00, lag=8h) = Mon08:00.
+    expect(b.earlyStart?.getTime()).toBe(mon08.getTime());
+    // B's 8h duration: Mon08:00 -> Tue08:00.
+    expect(b.earlyFinish?.getTime()).toBe(tue08.getTime());
+  });
+
+  it('applies a finish-to-finish dependency with lag', () => {
+    // A(16h) -[FF, lag=8h]-> B(8h)
+    const project = createProject({
+      id: 'p6',
+      name: 'FF Project',
+      startDate: START_DATE,
+      tasks: [
+        { id: 'A', name: 'A', durationHours: 16 },
+        { id: 'B', name: 'B', durationHours: 8 },
+      ],
+      dependencies: [{ id: 'd1', predecessorId: 'A', successorId: 'B', type: 'FF', lagHours: 8 }],
+    });
+
+    const result = project.schedule();
+    const byId = new Map(result.tasks.map((t) => [t.id, t]));
+    const b = byId.get('B') as Task;
+
+    const wed00 = new Date(2024, 0, 3, 0, 0, 0);
+    const wed08 = new Date(2024, 0, 3, 8, 0, 0);
+
+    // A.earlyFinish = Tue08:00. FF finish candidate = Tue08:00 + 8h = Wed08:00.
+    // B's 8h duration consumed backward from the finish candidate: Wed08:00 - 8h = Wed00:00.
+    expect(b.earlyStart?.getTime()).toBe(wed00.getTime());
+    expect(b.earlyFinish?.getTime()).toBe(wed08.getTime());
+  });
+
+  it('applies a start-to-finish dependency with lag', () => {
+    // A(8h) -[SF, lag=24h]-> B(8h)
+    const project = createProject({
+      id: 'p7',
+      name: 'SF Project',
+      startDate: START_DATE,
+      tasks: [
+        { id: 'A', name: 'A', durationHours: 8 },
+        { id: 'B', name: 'B', durationHours: 8 },
+      ],
+      dependencies: [{ id: 'd1', predecessorId: 'A', successorId: 'B', type: 'SF', lagHours: 24 }],
+    });
+
+    const result = project.schedule();
+    const byId = new Map(result.tasks.map((t) => [t.id, t]));
+    const b = byId.get('B') as Task;
+
+    const wed00 = new Date(2024, 0, 3, 0, 0, 0);
+    const wed08 = new Date(2024, 0, 3, 8, 0, 0);
+
+    // A.earlyStart = Mon00:00. SF finish candidate = Mon00:00 + 24h working = Wed08:00.
+    // B's 8h duration consumed backward from the finish candidate: Wed08:00 - 8h = Wed00:00.
+    expect(b.earlyStart?.getTime()).toBe(wed00.getTime());
+    expect(b.earlyFinish?.getTime()).toBe(wed08.getTime());
+  });
+
+  it('SNET constraint pushes earlyStart later than projectStart', () => {
+    // A(8h), no predecessors, SNET = Wed00:00 (later than projectStart = Mon00:00).
+    const wed00 = new Date(2024, 0, 3, 0, 0, 0);
+    const wed08 = new Date(2024, 0, 3, 8, 0, 0);
+
+    const project = createProject({
+      id: 'p8',
+      name: 'SNET Project',
+      startDate: START_DATE,
+      tasks: [
+        {
+          id: 'A',
+          name: 'A',
+          durationHours: 8,
+          constraint: { type: 'SNET', date: wed00 },
+        },
+      ],
+    });
+
+    const result = project.schedule();
+    const a = result.tasks.find((t) => t.id === 'A') as Task;
+
+    expect(a.earlyStart?.getTime()).toBe(wed00.getTime());
+    expect(a.earlyFinish?.getTime()).toBe(wed08.getTime());
+  });
+
+  it('FNLT constraint earlier than earlyFinish creates negative float and isConstraintViolated', () => {
+    // A(8h), no predecessors/successors. FNLT = Mon00:00, but earlyFinish = Mon08:00.
+    const mon00 = new Date(2024, 0, 1, 0, 0, 0);
+
+    const project = createProject({
+      id: 'p9',
+      name: 'FNLT Project',
+      startDate: START_DATE,
+      tasks: [
+        {
+          id: 'A',
+          name: 'A',
+          durationHours: 8,
+          constraint: { type: 'FNLT', date: mon00 },
+        },
+      ],
+    });
+
+    const result = project.schedule();
+    const a = result.tasks.find((t) => t.id === 'A') as Task;
+
+    expect(a.totalFloatHours).toBe(-8);
+    expect(a.isConstraintViolated).toBe(true);
+  });
+
+  it('MSO constraint on a standalone task is feasible (earlyStart equals constraint date)', () => {
+    // A(8h), no predecessors/successors. MSO = projectStart (Mon00:00).
+    const mon00 = new Date(2024, 0, 1, 0, 0, 0);
+
+    const project = createProject({
+      id: 'p10',
+      name: 'MSO Feasible Project',
+      startDate: START_DATE,
+      tasks: [
+        {
+          id: 'A',
+          name: 'A',
+          durationHours: 8,
+          constraint: { type: 'MSO', date: mon00 },
+        },
+      ],
+    });
+
+    const result = project.schedule();
+    const a = result.tasks.find((t) => t.id === 'A') as Task;
+
+    expect(a.earlyStart?.getTime()).toBe(mon00.getTime());
+    expect(a.totalFloatHours).toBe(0);
+    expect(a.isConstraintViolated).toBe(false);
+  });
+
+  it('MSO constraint on a successor that conflicts with predecessor logic causes negative float upstream', () => {
+    // A(16h) -[FS]-> B(8h), B has MSO = Mon00:00 (== projectStart).
+    // B's MSO hard-overrides its earlyStart to Mon00:00, ignoring A's FS dependency,
+    // which makes A infeasible (negative float / isConstraintViolated on A).
+    const mon00 = new Date(2024, 0, 1, 0, 0, 0);
+
+    const project = createProject({
+      id: 'p11',
+      name: 'MSO Infeasible Project',
+      startDate: START_DATE,
+      tasks: [
+        { id: 'A', name: 'A', durationHours: 16 },
+        {
+          id: 'B',
+          name: 'B',
+          durationHours: 8,
+          constraint: { type: 'MSO', date: mon00 },
+        },
+      ],
+      dependencies: [{ id: 'd1', predecessorId: 'A', successorId: 'B', type: 'FS' }],
+    });
+
+    const result = project.schedule();
+    const byId = new Map(result.tasks.map((t) => [t.id, t]));
+    const a = byId.get('A') as Task;
+    const b = byId.get('B') as Task;
+
+    // B itself is feasible: MSO is a hard override, so earlyStart === constraint.date.
+    expect(b.earlyStart?.getTime()).toBe(mon00.getTime());
+    expect(b.isConstraintViolated).toBe(false);
+
+    // A is forced infeasible: B's MSO date is before A can finish via the FS dependency.
+    expect(a.totalFloatHours).toBe(-16);
+    expect(a.isConstraintViolated).toBe(true);
+  });
+
+  it('ALAP task: start/end equal lateStart/lateFinish while earlyStart/earlyFinish remain ASAP', () => {
+    // A(8h) -[FS]-> B(8h) (ALAP), A(8h) -[FS]-> C(24h). Neither B nor C has successors.
+    const project = createProject({
+      id: 'p12',
+      name: 'ALAP Project',
+      startDate: START_DATE,
+      tasks: [
+        { id: 'A', name: 'A', durationHours: 8 },
+        { id: 'B', name: 'B', durationHours: 8, constraint: { type: 'ALAP', date: START_DATE } },
+        { id: 'C', name: 'C', durationHours: 24 },
+      ],
+      dependencies: [
+        { id: 'd1', predecessorId: 'A', successorId: 'B', type: 'FS' },
+        { id: 'd2', predecessorId: 'A', successorId: 'C', type: 'FS' },
+      ],
+    });
+
+    const result = project.schedule();
+    const b = result.tasks.find((t) => t.id === 'B') as Task;
+
+    const tue00 = new Date(2024, 0, 2, 0, 0, 0);
+    const tue08 = new Date(2024, 0, 2, 8, 0, 0);
+    const thu00 = new Date(2024, 0, 4, 0, 0, 0);
+    const thu08 = new Date(2024, 0, 4, 8, 0, 0);
+
+    // ASAP-based early dates remain unchanged. A finishes exactly at Mon
+    // window-end (Mon08:00), so B's FS-derived earlyStart forward-snaps to Tue00:00.
+    expect(b.earlyStart?.getTime()).toBe(tue00.getTime());
+    expect(b.earlyFinish?.getTime()).toBe(tue08.getTime());
+
+    // Positive float: B can slip from Mon08:00 to Thu00:00.
+    expect(b.totalFloatHours).toBe(16);
+    expect(b.isCritical).toBe(false);
+
+    // start/end are overridden to the late dates for ALAP, diverging from early dates.
+    expect(b.lateStart?.getTime()).toBe(thu00.getTime());
+    expect(b.lateFinish?.getTime()).toBe(thu08.getTime());
+    expect(b.start?.getTime()).toBe(b.lateStart?.getTime());
+    expect(b.end?.getTime()).toBe(b.lateFinish?.getTime());
+    expect(b.start?.getTime()).not.toBe(b.earlyStart?.getTime());
+    expect(b.end?.getTime()).not.toBe(b.earlyFinish?.getTime());
+  });
 });
