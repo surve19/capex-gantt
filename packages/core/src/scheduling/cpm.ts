@@ -1,4 +1,9 @@
-import { addWorkingHours, diffWorkingHours } from '../calendar/calendar-engine.js';
+import {
+  addWorkingHours,
+  convertInstant,
+  diffWorkingHours,
+  resolveEffectiveCalendar,
+} from '../calendar/calendar-engine.js';
 import type { Calendar, Project, Task } from '../types.js';
 import { maxDate, minDate } from '../utils/date.js';
 import { buildGraph } from './graph.js';
@@ -20,31 +25,33 @@ export interface CpmResult {
  *   working-hour lag, negative L is lead/overlap.
  * - `totalFloatHours` is the number of working hours between a task's early
  *   and late start.
+ * - When a dependency links tasks on different calendars, the date computed in
+ *   the other task's calendar frame is passed through `convertInstant` before
+ *   `addWorkingHours` snaps/steps it against this task's calendar.
  *
  * Mutates and returns the tasks on `project` with computed schedule fields.
  */
 export function runCpm(project: Project): CpmResult {
   const { tasks, dependencies, calendars, defaultCalendarId, startDate } = project;
 
-  const calendarById = new Map(calendars.map((c) => [c.id, c]));
-  const resolveCalendar = (task: Task): Calendar => {
-    const id = task.calendarId ?? defaultCalendarId;
-    const calendar = calendarById.get(id);
+  // resolveEffectiveCalendar resolves `inheritsFrom` chains; memoize per calendar
+  // id since it's called once per task per pass.
+  const effectiveCalendarById = new Map<string, Calendar>();
+  const resolveCalendarById = (id: string): Calendar => {
+    let calendar = effectiveCalendarById.get(id);
     if (!calendar) {
-      throw new Error(`Task "${task.id}" references unknown calendar "${id}"`);
+      calendar = resolveEffectiveCalendar(calendars, id);
+      effectiveCalendarById.set(id, calendar);
     }
     return calendar;
   };
+  const resolveCalendar = (task: Task): Calendar =>
+    resolveCalendarById(task.calendarId ?? defaultCalendarId);
 
   const { predecessors, successors, topoOrder } = buildGraph(tasks, dependencies);
   const taskById = new Map(tasks.map((t) => [t.id, t]));
 
-  const defaultCalendar = calendarById.get(defaultCalendarId);
-  if (!defaultCalendar) {
-    throw new Error(
-      `Project "${project.id}" references unknown defaultCalendarId "${defaultCalendarId}"`,
-    );
-  }
+  const defaultCalendar = resolveCalendarById(defaultCalendarId);
   const projectStart = addWorkingHours(defaultCalendar, startDate, 0);
 
   // Forward pass: earliest a task can start/finish given its predecessors.
@@ -60,16 +67,34 @@ export function runCpm(project: Project): CpmResult {
     for (const { dependency, task: predecessorTask } of preds) {
       const lag = dependency.lagHours ?? 0;
       if (!predecessorTask.earlyFinish || !predecessorTask.earlyStart) continue;
+      const predecessorCalendar = resolveCalendar(predecessorTask);
 
       switch (dependency.type) {
-        case 'FS':
-          candidates.push(addWorkingHours(calendar, predecessorTask.earlyFinish, lag));
+        case 'FS': {
+          const predFinish = convertInstant(
+            predecessorCalendar,
+            calendar,
+            predecessorTask.earlyFinish,
+          );
+          candidates.push(addWorkingHours(calendar, predFinish, lag));
           break;
-        case 'SS':
-          candidates.push(addWorkingHours(calendar, predecessorTask.earlyStart, lag));
+        }
+        case 'SS': {
+          const predStart = convertInstant(
+            predecessorCalendar,
+            calendar,
+            predecessorTask.earlyStart,
+          );
+          candidates.push(addWorkingHours(calendar, predStart, lag));
           break;
+        }
         case 'FF': {
-          const finishCandidate = addWorkingHours(calendar, predecessorTask.earlyFinish, lag);
+          const predFinish = convertInstant(
+            predecessorCalendar,
+            calendar,
+            predecessorTask.earlyFinish,
+          );
+          const finishCandidate = addWorkingHours(calendar, predFinish, lag);
           candidates.push(
             durationHours <= 0
               ? finishCandidate
@@ -78,7 +103,12 @@ export function runCpm(project: Project): CpmResult {
           break;
         }
         case 'SF': {
-          const finishCandidate = addWorkingHours(calendar, predecessorTask.earlyStart, lag);
+          const predStart = convertInstant(
+            predecessorCalendar,
+            calendar,
+            predecessorTask.earlyStart,
+          );
+          const finishCandidate = addWorkingHours(calendar, predStart, lag);
           candidates.push(
             durationHours <= 0
               ? finishCandidate
@@ -148,16 +178,22 @@ export function runCpm(project: Project): CpmResult {
     for (const { dependency, task: successorTask } of succs) {
       const lag = dependency.lagHours ?? 0;
       if (!successorTask.lateStart || !successorTask.lateFinish) continue;
+      const successorCalendar = resolveCalendar(successorTask);
 
       switch (dependency.type) {
-        case 'FS':
-          candidates.push(addWorkingHours(calendar, successorTask.lateStart, -lag));
+        case 'FS': {
+          const succStart = convertInstant(successorCalendar, calendar, successorTask.lateStart);
+          candidates.push(addWorkingHours(calendar, succStart, -lag));
           break;
-        case 'FF':
-          candidates.push(addWorkingHours(calendar, successorTask.lateFinish, -lag));
+        }
+        case 'FF': {
+          const succFinish = convertInstant(successorCalendar, calendar, successorTask.lateFinish);
+          candidates.push(addWorkingHours(calendar, succFinish, -lag));
           break;
+        }
         case 'SS': {
-          const startCandidate = addWorkingHours(calendar, successorTask.lateStart, -lag);
+          const succStart = convertInstant(successorCalendar, calendar, successorTask.lateStart);
+          const startCandidate = addWorkingHours(calendar, succStart, -lag);
           candidates.push(
             durationHours <= 0
               ? startCandidate
@@ -166,7 +202,8 @@ export function runCpm(project: Project): CpmResult {
           break;
         }
         case 'SF': {
-          const startCandidate = addWorkingHours(calendar, successorTask.lateFinish, -lag);
+          const succFinish = convertInstant(successorCalendar, calendar, successorTask.lateFinish);
+          const startCandidate = addWorkingHours(calendar, succFinish, -lag);
           candidates.push(
             durationHours <= 0
               ? startCandidate

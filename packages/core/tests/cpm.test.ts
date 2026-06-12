@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Task } from '../src/index.js';
-import { createProject, toISODateString } from '../src/index.js';
+import type { Calendar, Task } from '../src/index.js';
+import { createDefaultCalendar, createProject, toISODateString } from '../src/index.js';
 
 // 2024-01-01 is a Monday.
 const START_DATE = new Date(2024, 0, 1);
@@ -383,5 +383,109 @@ describe('CPM forward/backward pass', () => {
     expect(b.end?.getTime()).toBe(b.lateFinish?.getTime());
     expect(b.start?.getTime()).not.toBe(b.earlyStart?.getTime());
     expect(b.end?.getTime()).not.toBe(b.earlyFinish?.getTime());
+  });
+
+  describe('cross-calendar dependencies (convertInstant integration)', () => {
+    const SITE_CALENDAR: Calendar = createDefaultCalendar('site', 'Site (Mon-Fri, 8h)');
+    const PROCUREMENT_CALENDAR: Calendar = {
+      id: 'procurement',
+      name: 'Procurement (24/7)',
+      workingDays: [true, true, true, true, true, true, true],
+      exceptions: [],
+      hoursPerDay: 24,
+    };
+
+    it('FS chain across calendars exercises convertInstant window-end and proportional-scale branches both ways', () => {
+      // A(site,8h,dur=8) -FS-> B(procurement,24h,dur=12) -FS-> C(site,8h,dur=8)
+      const project = createProject({
+        id: 'p13',
+        name: 'Cross-Calendar FS Chain',
+        startDate: START_DATE,
+        calendars: [SITE_CALENDAR, PROCUREMENT_CALENDAR],
+        defaultCalendarId: 'site',
+        tasks: [
+          { id: 'A', name: 'A', durationHours: 8, calendarId: 'site' },
+          { id: 'B', name: 'B', durationHours: 12, calendarId: 'procurement' },
+          { id: 'C', name: 'C', durationHours: 8, calendarId: 'site' },
+        ],
+        dependencies: [
+          { id: 'd1', predecessorId: 'A', successorId: 'B', type: 'FS' },
+          { id: 'd2', predecessorId: 'B', successorId: 'C', type: 'FS' },
+        ],
+      });
+
+      const result = project.schedule();
+      const byId = new Map(result.tasks.map((t) => [t.id, t]));
+      const a = byId.get('A') as Task;
+      const b = byId.get('B') as Task;
+      const c = byId.get('C') as Task;
+
+      const mon00 = new Date(2024, 0, 1, 0, 0, 0);
+      const mon08 = new Date(2024, 0, 1, 8, 0, 0);
+      const tue00 = new Date(2024, 0, 2, 0, 0, 0);
+      const tue04 = new Date(2024, 0, 2, 4, 0, 0);
+      const tue12 = new Date(2024, 0, 2, 12, 0, 0);
+      const wed04 = new Date(2024, 0, 3, 4, 0, 0);
+
+      // A finishes exactly at site's window end (Mon08:00, msOfDay === 8h === fromWindow).
+      expect(a.earlyStart?.getTime()).toBe(mon00.getTime());
+      expect(a.earlyFinish?.getTime()).toBe(mon08.getTime());
+
+      // window-end branch: A's window-end (8h of an 8h day) maps to B's window-end
+      // (24h of a 24h day), which forward-snaps to Tue00:00.
+      expect(b.earlyStart?.getTime()).toBe(tue00.getTime());
+      expect(b.earlyFinish?.getTime()).toBe(tue12.getTime());
+
+      // proportional-scale branch: B's earlyFinish (12h of a 24h day) scales to
+      // 4h of an 8h day -> Tue04:00.
+      expect(c.earlyStart?.getTime()).toBe(tue04.getTime());
+      expect(c.earlyFinish?.getTime()).toBe(wed04.getTime());
+
+      // Single chain: all three tasks are critical.
+      expect(a.isCritical).toBe(true);
+      expect(b.isCritical).toBe(true);
+      expect(c.isCritical).toBe(true);
+      expect(toISODateString(result.projectFinish)).toBe(toISODateString(wed04));
+    });
+
+    it('FF dependency with lag across calendars converts both forward- and backward-pass dates', () => {
+      // X(site,8h,dur=4) -FF[lag=0]-> Y(procurement,24h,dur=6)
+      const project = createProject({
+        id: 'p14',
+        name: 'Cross-Calendar FF',
+        startDate: START_DATE,
+        calendars: [SITE_CALENDAR, PROCUREMENT_CALENDAR],
+        defaultCalendarId: 'site',
+        tasks: [
+          { id: 'X', name: 'X', durationHours: 4, calendarId: 'site' },
+          { id: 'Y', name: 'Y', durationHours: 6, calendarId: 'procurement' },
+        ],
+        dependencies: [{ id: 'd1', predecessorId: 'X', successorId: 'Y', type: 'FF' }],
+      });
+
+      const result = project.schedule();
+      const byId = new Map(result.tasks.map((t) => [t.id, t]));
+      const x = byId.get('X') as Task;
+      const y = byId.get('Y') as Task;
+
+      const mon00 = new Date(2024, 0, 1, 0, 0, 0);
+      const mon04 = new Date(2024, 0, 1, 4, 0, 0);
+      const mon06 = new Date(2024, 0, 1, 6, 0, 0);
+      const mon12 = new Date(2024, 0, 1, 12, 0, 0);
+
+      expect(x.earlyStart?.getTime()).toBe(mon00.getTime());
+      expect(x.earlyFinish?.getTime()).toBe(mon04.getTime());
+
+      // X's earlyFinish (4h of an 8h day) scales to 12h of a 24h day; Y's FF
+      // finish candidate is Mon12:00, minus Y's 6h duration -> Mon06:00.
+      expect(y.earlyStart?.getTime()).toBe(mon06.getTime());
+      expect(y.earlyFinish?.getTime()).toBe(mon12.getTime());
+
+      // Backward pass converts Y.lateFinish (12h of a 24h day) back to 4h of
+      // an 8h day, giving X the same lateFinish as its earlyFinish.
+      expect(x.lateFinish?.getTime()).toBe(mon04.getTime());
+      expect(x.isCritical).toBe(true);
+      expect(y.isCritical).toBe(true);
+    });
   });
 });
