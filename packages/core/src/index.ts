@@ -1,4 +1,10 @@
-export { addWorkingHours, diffWorkingHours, isWorkingDay } from './calendar/calendar-engine.js';
+export {
+  addWorkingHours,
+  convertInstant,
+  diffWorkingHours,
+  isWorkingDay,
+  resolveEffectiveCalendar,
+} from './calendar/calendar-engine.js';
 export { createDefaultCalendar } from './calendar/default-calendars.js';
 export { createProject } from './project.js';
 export { runCpm } from './scheduling/cpm.js';

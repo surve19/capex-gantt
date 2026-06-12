@@ -21,6 +21,15 @@ import { addDays, toDate, toISODateString } from '../utils/date.js';
  * hours, so a DST-transition day combined with `hoursPerDay` near 24 could be
  * off by the DST delta. The day-based engine had no DST handling either, and
  * typical EPC calendars use `hoursPerDay <= 12`.
+ *
+ * Phase 2 adds multi-calendar support. `resolveEffectiveCalendar` resolves a
+ * calendar's optional `inheritsFrom` parent into a single flat `Calendar`
+ * (merging exceptions, child wins on date conflicts) so the rest of this
+ * module never needs to be aware of inheritance. `convertInstant` converts an
+ * instant computed in one calendar's working-day frame into the equivalent
+ * instant in another calendar's frame, preserving the fraction of the
+ * working day elapsed — used when chaining dependencies across calendars with
+ * different `hoursPerDay`.
  */
 
 const MS_PER_HOUR = 60 * 60 * 1000;
@@ -191,4 +200,90 @@ export function diffWorkingHours(calendar: Calendar, start: Date, end: Date): nu
   totalMs += b.msOfDay - current.msOfDay;
 
   return (sign * totalMs) / MS_PER_HOUR;
+}
+
+/**
+ * Resolves a calendar's optional `inheritsFrom` parent into a single flat
+ * `Calendar` with no `inheritsFrom` of its own.
+ *
+ * - If `calendarId` has no `inheritsFrom`, it is returned as-is (a shallow
+ *   copy).
+ * - If it has `inheritsFrom`, the parent calendar is looked up and its
+ *   `exceptions` are merged with the child's: effective `exceptions` =
+ *   parent's exceptions concatenated with the child's, de-duped by `date`
+ *   (the child's entry wins when both specify the same `date`). `id`,
+ *   `name`, `workingDays`, and `hoursPerDay` always come from the child,
+ *   since these are required fields the child always defines.
+ *
+ * Throws if `calendarId` is not found, if its `inheritsFrom` parent is not
+ * found, or if the parent itself has `inheritsFrom` set (multi-level chains
+ * are not supported).
+ */
+export function resolveEffectiveCalendar(calendars: Calendar[], calendarId: string): Calendar {
+  const calendar = calendars.find((c) => c.id === calendarId);
+  if (!calendar) {
+    throw new Error(`Calendar "${calendarId}" not found`);
+  }
+
+  if (!calendar.inheritsFrom) {
+    return { ...calendar };
+  }
+
+  const parentId = calendar.inheritsFrom;
+  const parent = calendars.find((c) => c.id === parentId);
+  if (!parent) {
+    throw new Error(`Calendar "${calendarId}" inherits from unknown calendar "${parentId}"`);
+  }
+  if (parent.inheritsFrom) {
+    throw new Error(
+      `Calendar "${parentId}" cannot be used as a parent because it itself inherits from another calendar (multi-level chains not supported)`,
+    );
+  }
+
+  const exceptionsByDate = new Map<string, (typeof calendar.exceptions)[number]>();
+  for (const exception of parent.exceptions) {
+    exceptionsByDate.set(exception.date, exception);
+  }
+  for (const exception of calendar.exceptions) {
+    exceptionsByDate.set(exception.date, exception);
+  }
+
+  return {
+    id: calendar.id,
+    name: calendar.name,
+    workingDays: calendar.workingDays,
+    hoursPerDay: calendar.hoursPerDay,
+    exceptions: Array.from(exceptionsByDate.values()),
+  };
+}
+
+/**
+ * Converts an instant computed in `from`'s calendar frame into the
+ * equivalent instant in `to`'s frame, preserving the fraction of the working
+ * day elapsed.
+ *
+ * - If `from.id === to.id`, returns `date` unchanged (fast path).
+ * - Otherwise decomposes `date` into its calendar day and milliseconds since
+ *   midnight, then rescales `msOfDay` by the ratio of the two calendars'
+ *   working-day lengths (`hoursPerDay * MS_PER_HOUR`). An instant exactly at
+ *   `from`'s window end maps to exactly `to`'s window end (which then rolls
+ *   to the next working day's `00:00` via `forwardSnap` inside
+ *   `addWorkingHours`, just like the same-calendar case).
+ *
+ * When `from.hoursPerDay === to.hoursPerDay`, this formula is an identity
+ * regardless of `id` — no special-casing needed.
+ *
+ * The result is not itself re-snapped to a working day in `to`'s calendar;
+ * the caller (`addWorkingHours`) does that via `forwardSnap`/`backwardSnap`.
+ */
+export function convertInstant(from: Calendar, to: Calendar, date: Date): Date {
+  if (from.id === to.id) return date;
+
+  const { day, msOfDay } = toDayTime(date);
+  const fromWindow = from.hoursPerDay * MS_PER_HOUR;
+  const toWindow = to.hoursPerDay * MS_PER_HOUR;
+  const convertedMsOfDay =
+    msOfDay >= fromWindow ? toWindow : Math.round(msOfDay * (toWindow / fromWindow));
+
+  return fromDayTime({ day, msOfDay: convertedMsOfDay });
 }

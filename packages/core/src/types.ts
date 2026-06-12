@@ -84,6 +84,12 @@ export interface Calendar {
   exceptions: CalendarException[];
   /** Working hours per working day, e.g. 8. Must be > 0 and <= 24. */
   hoursPerDay: number;
+  /**
+   * Optional parent calendar id. Single-level chain — the parent must not
+   * itself set `inheritsFrom` (multi-level chains are rejected at resolution
+   * time).
+   */
+  inheritsFrom?: string;
 }
 
 export interface Project {
@@ -114,6 +120,24 @@ export interface ProjectInstance {
   getTasks(): Task[];
   /** Runs the CPM forward/backward pass and returns the updated schedule. */
   schedule(): ScheduleResult;
+  /**
+   * Adds a new calendar to the project. Validates `hoursPerDay` (must be > 0
+   * and <= 24) and, if `inheritsFrom` is set, that the parent calendar exists
+   * and itself has no `inheritsFrom` (multi-level chains are rejected).
+   */
+  addCalendar(calendar: Calendar): void;
+  /**
+   * Merges `patch` into the existing calendar identified by `id` (shallow
+   * merge) and re-runs the same validation as `addCalendar` on the result.
+   * Throws if no calendar with `id` exists.
+   */
+  updateCalendar(id: string, patch: Partial<Calendar>): void;
+  /**
+   * Removes the calendar identified by `id`. Throws if it is the project's
+   * default calendar, if any task still references it via `calendarId`, or
+   * if any other calendar inherits from it.
+   */
+  removeCalendar(id: string): void;
 }
 
 /** Input accepted by `createProject`. Calendars are optional; a default Mon-Fri calendar is created if omitted. */
