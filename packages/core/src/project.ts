@@ -3,6 +3,7 @@ import { runCpm } from './scheduling/cpm.js';
 import { deriveCriticalPath } from './scheduling/critical-path.js';
 import type {
   Calendar,
+  ConstraintType,
   CreateProjectInput,
   Dependency,
   Project,
@@ -13,6 +14,17 @@ import type {
 import { toDate } from './utils/date.js';
 
 const DEFAULT_CALENDAR_ID = 'default';
+
+const CONSTRAINT_TYPES: ReadonlySet<ConstraintType> = new Set<ConstraintType>([
+  'ASAP',
+  'ALAP',
+  'MSO',
+  'MFO',
+  'SNET',
+  'SNLT',
+  'FNET',
+  'FNLT',
+]);
 
 /**
  * Creates a project instance from plain task/dependency/calendar data.
@@ -49,6 +61,16 @@ export function createProject(input: CreateProjectInput): ProjectInstance {
 
     if (task.durationHours < 0) {
       throw new Error(`Task "${task.id}" has a negative durationHours`);
+    }
+
+    if (task.constraint) {
+      const { type, date } = task.constraint;
+      if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+        throw new Error(`Task "${task.id}" has an invalid constraint.date`);
+      }
+      if (!CONSTRAINT_TYPES.has(type)) {
+        throw new Error(`Task "${task.id}" has an unknown constraint.type "${String(type)}"`);
+      }
     }
   }
 

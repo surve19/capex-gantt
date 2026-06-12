@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ConstraintType } from '../src/index.js';
 import { createProject } from '../src/index.js';
 
 const START_DATE = new Date(2024, 0, 1); // Monday
@@ -151,19 +152,56 @@ describe('createProject', () => {
     expect(() => project.schedule()).toThrow(/cycle/);
   });
 
-  it('schedule() throws on a non-FS dependency type (Phase 1 limitation)', () => {
+  it('schedule() succeeds with a non-FS (SS) dependency type', () => {
     const project = createProject({
       id: 'p7',
       name: 'Project',
       startDate: START_DATE,
       tasks: [
-        { id: 'A', name: 'A', durationHours: 1 },
-        { id: 'B', name: 'B', durationHours: 1 },
+        { id: 'A', name: 'A', durationHours: 8 },
+        { id: 'B', name: 'B', durationHours: 8 },
       ],
       dependencies: [{ id: 'd1', predecessorId: 'A', successorId: 'B', type: 'SS' }],
     });
 
-    expect(() => project.schedule()).toThrow(/FS/);
+    expect(() => project.schedule()).not.toThrow();
+  });
+
+  it('throws on an invalid constraint.date', () => {
+    expect(() =>
+      createProject({
+        id: 'p10',
+        name: 'Project',
+        startDate: START_DATE,
+        tasks: [
+          {
+            id: 'A',
+            name: 'A',
+            durationHours: 8,
+            constraint: { type: 'MSO', date: new Date(Number.NaN) },
+          },
+        ],
+      }),
+    ).toThrow(/constraint.date/);
+  });
+
+  it('throws on an unknown constraint.type', () => {
+    expect(() =>
+      createProject({
+        id: 'p11',
+        name: 'Project',
+        startDate: START_DATE,
+        tasks: [
+          {
+            id: 'A',
+            name: 'A',
+            durationHours: 8,
+            // Cast to bypass the ConstraintType union for a runtime/JSON-input check.
+            constraint: { type: 'BOGUS' as ConstraintType, date: START_DATE },
+          },
+        ],
+      }),
+    ).toThrow(/constraint.type/);
   });
 
   it('getTasks() reflects computed schedule fields after schedule()', () => {
