@@ -136,6 +136,7 @@
   font-weight: 600;
   border-right: 1px solid var(--cg-border-color);
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .cg-timeline-header__day {
@@ -145,6 +146,7 @@
   justify-content: center;
   color: var(--cg-muted-text);
   border-right: 1px solid var(--cg-border-color);
+  box-sizing: border-box;
 }
 
 .cg-timeline-header__day--weekend {
