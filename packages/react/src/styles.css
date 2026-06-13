@@ -8,6 +8,12 @@
   --cg-bar-text-color: #ffffff;
   --cg-weekend-bg: #f1f5f9;
   --cg-row-critical-bg: #fef2f2;
+  --cg-row-violated-bg: #fff7ed;
+  --cg-violation-color: #d97706;
+  --cg-calendar-badge-bg: #eef2ff;
+  --cg-calendar-badge-color: #4338ca;
+  --cg-constraint-badge-bg: #f1f5f9;
+  --cg-constraint-badge-color: #475569;
   --cg-dependency-color: #94a3b8;
   --cg-dependency-color-critical: #f87171;
 
@@ -82,6 +88,10 @@
   background: var(--cg-row-critical-bg);
 }
 
+.cg-grid__row--violated {
+  background: var(--cg-row-violated-bg);
+}
+
 .cg-grid__cell {
   padding: 0 8px;
   overflow: hidden;
@@ -105,6 +115,48 @@
 .cg-grid__cell--float {
   width: 60px;
   text-align: right;
+}
+
+.cg-grid__cell--calendar {
+  width: 140px;
+}
+
+.cg-grid__cell--constraint {
+  width: 150px;
+  display: flex;
+  align-items: center;
+}
+
+/* Badges (calendar, constraint, violation) */
+
+.cg-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Fallback values let these badges render correctly even when used outside
+   `.cg-gantt` (e.g. in a legend), where the `--cg-*` custom properties
+   defined on `.cg-gantt` aren't in scope. */
+
+.cg-badge--calendar {
+  background: var(--cg-calendar-badge-bg, #eef2ff);
+  color: var(--cg-calendar-badge-color, #4338ca);
+}
+
+.cg-badge--constraint {
+  background: var(--cg-constraint-badge-bg, #f1f5f9);
+  color: var(--cg-constraint-badge-color, #475569);
+}
+
+.cg-badge--violation {
+  background: var(--cg-violation-color, #d97706);
+  color: #ffffff;
 }
 
 /* Timeline header */
@@ -189,6 +241,10 @@
   background: var(--cg-bar-color-critical);
 }
 
+.cg-task-bar--violated {
+  box-shadow: inset 0 0 0 2px var(--cg-violation-color);
+}
+
 .cg-task-bar__label {
   padding: 0 6px;
   white-space: nowrap;
@@ -216,4 +272,17 @@
 
 .cg-dependency-line--critical {
   stroke: var(--cg-dependency-color-critical);
+}
+
+/* FS is the implicit default (solid); SS/FF/SF get distinct dash patterns. */
+.cg-dependency-line--ss {
+  stroke-dasharray: 5 3;
+}
+
+.cg-dependency-line--ff {
+  stroke-dasharray: 1 3;
+}
+
+.cg-dependency-line--sf {
+  stroke-dasharray: 5 2 1 2;
 }

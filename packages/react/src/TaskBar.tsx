@@ -20,11 +20,19 @@ export function TaskBar({ task, scale, rowHeight, top }: TaskBarProps) {
   const spanDays = diffCalendarDays(task.start, task.end) + 1;
   const width = Math.max(scale.pxPerDay * 0.5, spanDays * scale.pxPerDay - BAR_GAP);
 
-  const title = `${task.name}\n${toISODateString(task.start)} → ${toISODateString(task.end)}\nFloat: ${task.totalFloatHours ?? 0}h`;
+  const constraintLine = task.constraint
+    ? `\nConstraint: ${task.constraint.type} ${toISODateString(task.constraint.date)}`
+    : '';
+  const violationLine = task.isConstraintViolated ? '\n⚠ Constraint violated' : '';
+  const title = `${task.name}\n${toISODateString(task.start)} → ${toISODateString(task.end)}\nFloat: ${task.totalFloatHours ?? 0}h${constraintLine}${violationLine}`;
+
+  const barClasses = ['cg-task-bar'];
+  if (task.isCritical) barClasses.push('cg-task-bar--critical');
+  if (task.isConstraintViolated) barClasses.push('cg-task-bar--violated');
 
   return (
     <div
-      className={`cg-task-bar${task.isCritical ? ' cg-task-bar--critical' : ''}`}
+      className={barClasses.join(' ')}
       style={{
         left,
         top: top + BAR_VERTICAL_PADDING / 2,

@@ -11,7 +11,7 @@ export interface DependencyLinesProps {
 
 const MIN_ELBOW_OFFSET = 12;
 
-/** SVG overlay drawing finish-to-start dependency arrows between task bars. */
+/** SVG overlay drawing dependency arrows between task bars, routed per dependency type (FS/SS/FF/SF). */
 export function DependencyLines({ tasks, dependencies, scale, rowHeight }: DependencyLinesProps) {
   const taskIndexById = useMemo(() => {
     const map = new Map<string, { task: Task; index: number }>();
@@ -59,11 +59,27 @@ export function DependencyLines({ tasks, dependencies, scale, rowHeight }: Depen
         const predecessor = taskIndexById.get(dependency.predecessorId);
         const successor = taskIndexById.get(dependency.successorId);
         if (!predecessor || !successor) return null;
-        if (!predecessor.task.end || !successor.task.start) return null;
+        if (
+          !predecessor.task.start ||
+          !predecessor.task.end ||
+          !successor.task.start ||
+          !successor.task.end
+        ) {
+          return null;
+        }
 
-        const startX = scale.dateToX(predecessor.task.end) + scale.pxPerDay;
+        // The anchor for a "finish" endpoint sits one day past `end` (the
+        // visual right edge of the bar, matching TaskBar's width formula);
+        // a "start" endpoint sits at the bar's left edge.
+        const startX =
+          dependency.type === 'SS' || dependency.type === 'SF'
+            ? scale.dateToX(predecessor.task.start)
+            : scale.dateToX(predecessor.task.end) + scale.pxPerDay;
         const startY = predecessor.index * rowHeight + rowHeight / 2;
-        const endX = scale.dateToX(successor.task.start);
+        const endX =
+          dependency.type === 'FF' || dependency.type === 'SF'
+            ? scale.dateToX(successor.task.end) + scale.pxPerDay
+            : scale.dateToX(successor.task.start);
         const endY = successor.index * rowHeight + rowHeight / 2;
 
         const midX =
@@ -72,17 +88,24 @@ export function DependencyLines({ tasks, dependencies, scale, rowHeight }: Depen
         const path = `M ${startX} ${startY} L ${midX} ${startY} L ${midX} ${endY} L ${endX} ${endY}`;
 
         const isCritical = predecessor.task.isCritical && successor.task.isCritical;
+        const typeClass = `cg-dependency-line--${dependency.type.toLowerCase()}`;
+        const lag = dependency.lagHours ?? 0;
 
         return (
           <path
             key={dependency.id}
             d={path}
-            className={`cg-dependency-line${isCritical ? ' cg-dependency-line--critical' : ''}`}
+            className={`cg-dependency-line ${typeClass}${isCritical ? ' cg-dependency-line--critical' : ''}`}
             fill="none"
             markerEnd={
               isCritical ? 'url(#cg-dependency-arrow-critical)' : 'url(#cg-dependency-arrow)'
             }
-          />
+          >
+            <title>
+              {dependency.type}
+              {lag !== 0 ? ` ${lag > 0 ? '+' : ''}${lag}h` : ''}
+            </title>
+          </path>
         );
       })}
     </svg>

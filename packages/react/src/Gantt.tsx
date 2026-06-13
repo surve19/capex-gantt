@@ -1,4 +1,4 @@
-import type { Dependency, Task } from '@capex-gantt/core';
+import type { Calendar, Dependency, Task } from '@capex-gantt/core';
 import { GanttGrid } from './GanttGrid.js';
 import { GanttTimeline } from './GanttTimeline.js';
 import { DEFAULT_ROW_HEIGHT } from './layout.js';
@@ -9,6 +9,10 @@ export interface GanttProps {
   tasks: Task[];
   /** Finish-to-start dependencies, rendered as arrows between bars. */
   dependencies?: Dependency[];
+  /** Project calendars, used to label tasks scheduled on a non-default calendar. */
+  calendars?: Calendar[];
+  /** The project's default calendar id. Tasks using it show no calendar badge. */
+  defaultCalendarId?: string;
   /** Row height in pixels. Defaults to 36. */
   rowHeight?: number;
   className?: string;
@@ -18,6 +22,8 @@ export interface GanttProps {
 export function Gantt({
   tasks,
   dependencies = [],
+  calendars,
+  defaultCalendarId,
   rowHeight = DEFAULT_ROW_HEIGHT,
   className,
 }: GanttProps) {
@@ -44,7 +50,12 @@ export function Gantt({
         </button>
       </div>
       <div className="cg-gantt__body">
-        <GanttGrid tasks={tasks} rowHeight={rowHeight} />
+        <GanttGrid
+          tasks={tasks}
+          rowHeight={rowHeight}
+          calendars={calendars}
+          defaultCalendarId={defaultCalendarId}
+        />
         <div className="cg-gantt__timeline-scroll">
           <GanttTimeline
             tasks={tasks}
