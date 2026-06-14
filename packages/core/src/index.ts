@@ -10,6 +10,8 @@ export { createProject } from './project.js';
 export { runCpm } from './scheduling/cpm.js';
 export { deriveCriticalPath } from './scheduling/critical-path.js';
 export { buildGraph } from './scheduling/graph.js';
+export { deriveWbsHierarchy } from './scheduling/hierarchy.js';
+export { deriveVariance } from './scheduling/variance.js';
 export type {
   Calendar,
   CalendarException,
@@ -22,5 +24,6 @@ export type {
   ProjectInstance,
   ScheduleResult,
   Task,
+  TaskBaseline,
 } from './types.js';
 export { toDate, toISODateString } from './utils/date.js';

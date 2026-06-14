@@ -2,6 +2,8 @@ import { resolveEffectiveCalendar } from './calendar/calendar-engine.js';
 import { createDefaultCalendar } from './calendar/default-calendars.js';
 import { runCpm } from './scheduling/cpm.js';
 import { deriveCriticalPath } from './scheduling/critical-path.js';
+import { deriveWbsHierarchy } from './scheduling/hierarchy.js';
+import { deriveVariance } from './scheduling/variance.js';
 import type {
   Calendar,
   ConstraintType,
@@ -110,6 +112,30 @@ export function createProject(input: CreateProjectInput): ProjectInstance {
         throw new Error(`Task "${task.id}" has an unknown constraint.type "${String(type)}"`);
       }
     }
+
+    if (task.parentId !== undefined && task.parentId !== null) {
+      if (task.parentId === task.id) {
+        throw new Error(`Task "${task.id}" cannot be its own parent`);
+      }
+      if (!tasks.some((t) => t.id === task.parentId)) {
+        throw new Error(`Task "${task.id}" references unknown parent task "${task.parentId}"`);
+      }
+    }
+  }
+
+  // Detect cyclic parentId chains (e.g. A -> B -> A). Walking each task's
+  // chain individually is O(n x depth), fine for typical WBS tree sizes.
+  const taskById = new Map(tasks.map((t) => [t.id, t]));
+  for (const task of tasks) {
+    const visited = new Set<string>([task.id]);
+    let current = task.parentId;
+    while (current !== undefined && current !== null) {
+      if (visited.has(current)) {
+        throw new Error(`Task "${task.id}" has a cyclic parentId chain`);
+      }
+      visited.add(current);
+      current = taskById.get(current)?.parentId;
+    }
   }
 
   for (const calendar of calendars) {
@@ -138,6 +164,8 @@ export function createProject(input: CreateProjectInput): ProjectInstance {
     schedule: (): ScheduleResult => {
       const { tasks: scheduledTasks, projectFinish } = runCpm(project);
       const { criticalTaskIds } = deriveCriticalPath(scheduledTasks);
+      deriveWbsHierarchy(scheduledTasks, project.calendars, project.defaultCalendarId);
+      deriveVariance(scheduledTasks, project.calendars, project.defaultCalendarId);
       return { tasks: scheduledTasks, projectFinish, criticalTaskIds };
     },
     addCalendar: (calendar: Calendar): void => {
@@ -181,5 +209,34 @@ export function createProject(input: CreateProjectInput): ProjectInstance {
       }
       project.calendars.splice(index, 1);
     },
+    setBaseline: (taskIds?: string[]): void => {
+      for (const task of resolveTasks(project.tasks, taskIds)) {
+        if (!task.start || !task.end) {
+          throw new Error(
+            `Task "${task.id}" has no computed start/end — call schedule() before setBaseline()`,
+          );
+        }
+        task.baseline = { start: task.start, finish: task.end, durationHours: task.durationHours };
+      }
+    },
+    clearBaseline: (taskIds?: string[]): void => {
+      for (const task of resolveTasks(project.tasks, taskIds)) {
+        delete task.baseline;
+        delete task.startVarianceHours;
+        delete task.finishVarianceHours;
+      }
+    },
   };
+}
+
+/** Returns the tasks matching `taskIds`, or all of `tasks` if `taskIds` is omitted. Throws if any id is unknown. */
+function resolveTasks(tasks: Task[], taskIds?: string[]): Task[] {
+  if (!taskIds) return tasks;
+  return taskIds.map((id) => {
+    const task = tasks.find((t) => t.id === id);
+    if (!task) {
+      throw new Error(`Task "${id}" not found`);
+    }
+    return task;
+  });
 }

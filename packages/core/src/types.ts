@@ -11,9 +11,16 @@
  * continuous-time: a successor with `lagHours === 0` starts at the exact
  * instant its predecessor finishes (which may be mid-day for sub-day tasks).
  *
- * Later phases (baselines, constraints, percent complete, resources, EVM)
- * are expected to add fields to these interfaces rather than replace them,
- * so the shapes here are designed with that growth in mind.
+ * Phase 3 adds baseline snapshots and schedule variance.
+ *
+ * Phase 4 adds WBS hierarchy: `parentId` establishes parent/child grouping,
+ * `wbs` is auto-numbered positionally (or respects a manual override), and
+ * summary (parent) tasks have their `start`/`end`/`isCritical`/`durationHours`
+ * rolled up from their children.
+ *
+ * Later phases (percent complete, resources, EVM) are expected to add fields
+ * to these interfaces rather than replace them, so the shapes here are
+ * designed with that growth in mind.
  */
 
 /** A date, accepted as either a `Date` or an ISO-8601 string at API boundaries. */
@@ -22,9 +29,22 @@ export type DateInput = Date | string;
 export interface Task {
   id: string;
   name: string;
-  /** Optional WBS code/path for display and hierarchy, e.g. "1.2.3". */
+  /**
+   * Optional WBS code for display and hierarchy, e.g. "1.2.3". If left unset,
+   * `schedule()` auto-computes a positional code ("1", "1.1", "1.2", "2", ...)
+   * based on each task's order among siblings sharing the same `parentId`
+   * (top-level = no `parentId`). If the caller sets this manually, the manual
+   * value is preserved (not overwritten).
+   */
   wbs?: string;
-  /** Parent task id for WBS hierarchy, or null/undefined for top-level tasks. */
+  /**
+   * Parent task id for WBS hierarchy, or null/undefined for top-level tasks.
+   * Validated by `createProject`: must reference an existing task id, must not
+   * be self-referential, and must not form a cycle. For correct visual
+   * grouping in `@capex-gantt/react`, place each task immediately after its
+   * parent (and before the parent's next sibling) in the `tasks` array —
+   * `deriveWbsHierarchy` does not reorder tasks.
+   */
   parentId?: string | null;
 
   /** Duration in working hours, measured against the task's calendar. */
@@ -48,11 +68,37 @@ export interface Task {
   /** True when totalFloatHours === 0. */
   isCritical?: boolean;
 
+  /**
+   * True if any other task has `parentId === this.id` (i.e. this task is a
+   * summary/group row). Computed by `schedule()`. When true, `start`/`end`/
+   * `isCritical`/`durationHours` are rolled up from this task's children (see
+   * `deriveWbsHierarchy`); `totalFloatHours`/`earlyStart`/etc. retain whatever
+   * CPM computed for this task as a standalone node (unused for summary rows —
+   * the grid renders Float as "-" for summaries).
+   */
+  isSummary?: boolean;
+
   /** Optional scheduling constraint. Omitted/ASAP = unconstrained (default CPM behavior). */
   constraint?: { type: ConstraintType; date: Date };
   /** True when totalFloatHours < 0, or an MSO/MFO constraint's date doesn't match
    *  the computed early start/finish. Computed by the scheduler. */
   isConstraintViolated?: boolean;
+
+  /** Snapshot of `start`/`end`/`durationHours` captured by `setBaseline()`. */
+  baseline?: TaskBaseline;
+  /** Computed by schedule() when `baseline` is set: current `start` minus
+   *  `baseline.start`, in working hours (positive = slipped later, negative =
+   *  pulled earlier, 0 = on track). Undefined if no baseline. */
+  startVarianceHours?: number;
+  /** Same as `startVarianceHours`, for `end` vs `baseline.finish`. */
+  finishVarianceHours?: number;
+}
+
+/** Snapshot of a task's schedule at the time `setBaseline()` was called. */
+export interface TaskBaseline {
+  start: Date;
+  finish: Date;
+  durationHours: number;
 }
 
 /**
@@ -158,6 +204,20 @@ export interface ProjectInstance {
    * if any other calendar inherits from it.
    */
   removeCalendar(id: string): void;
+  /**
+   * Snapshots each task's current `start`/`end`/`durationHours` into
+   * `task.baseline`. Requires `schedule()` to have been run (throws if a
+   * task has no computed `start`/`end`). If `taskIds` is given, only those
+   * tasks are (re-)baselined; otherwise all tasks. Re-baselining overwrites
+   * any existing `baseline`. Throws if `taskIds` references an unknown task.
+   */
+  setBaseline(taskIds?: string[]): void;
+  /**
+   * Clears `baseline` and the computed variance fields (`startVarianceHours`,
+   * `finishVarianceHours`) for all tasks, or just `taskIds` if given. Throws
+   * if `taskIds` references an unknown task.
+   */
+  clearBaseline(taskIds?: string[]): void;
 }
 
 /** Input accepted by `createProject`. Calendars are optional; a default Mon-Fri calendar is created if omitted. */

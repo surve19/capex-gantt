@@ -13,6 +13,12 @@ import type { CreateProjectInput } from '@capex-gantt/core';
  * "Permitting & Approvals" carries a finish-no-later-than constraint that's
  * earlier than its natural finish, producing a constraint violation that
  * ripples back to its predecessor.
+ *
+ * Phase 4 groups the design and delivery tracks under two summary tasks
+ * ("Engineering" and "Procurement & Construction"), demonstrating WBS
+ * auto-numbering, collapsible groups, and rolled-up summary bars. Each
+ * summary task is listed immediately before its children so the grid renders
+ * the tree in document order (buildVisibleTasks does not reorder tasks).
  */
 export const sampleProjectInput: CreateProjectInput = {
   id: 'sample',
@@ -37,24 +43,38 @@ export const sampleProjectInput: CreateProjectInput = {
   defaultCalendarId: 'site',
   tasks: [
     { id: 'A', name: 'Site Survey & Mobilization', durationHours: 24 },
-    { id: 'B', name: 'Civil Design', durationHours: 40 },
-    { id: 'C', name: 'Mechanical Design', durationHours: 32 },
+    // Summary task grouping the design track. durationHours: 0 is a
+    // placeholder required by createProject; deriveWbsHierarchy overwrites
+    // it with the rolled-up span of B/C/D once the project is scheduled.
+    { id: 'ENG', name: 'Engineering', durationHours: 0 },
+    { id: 'B', name: 'Civil Design', durationHours: 40, parentId: 'ENG' },
+    { id: 'C', name: 'Mechanical Design', durationHours: 32, parentId: 'ENG' },
     {
       id: 'D',
       name: 'Permitting & Approvals',
       durationHours: 64,
+      parentId: 'ENG',
       // Regulator deadline earlier than the natural finish: intentionally
       // produces isConstraintViolated: true (and ripples back to "A") to
       // demonstrate constraint-violation highlighting.
       constraint: { type: 'FNLT', date: new Date(2024, 0, 11) },
     },
+    // Summary task grouping the procurement/construction track.
+    { id: 'PROC', name: 'Procurement & Construction', durationHours: 0 },
     // Runs on the 24/7 procurement calendar instead of the site calendar,
     // exercising cross-calendar instant conversion with its site-calendar
-    // predecessor/successor.
-    { id: 'E', name: 'Equipment Procurement', durationHours: 80, calendarId: 'procurement' },
-    { id: 'F', name: 'Site Preparation', durationHours: 32 },
-    { id: 'G', name: 'Construction & Installation', durationHours: 96 },
-    { id: 'H', name: 'Commissioning & Handover', durationHours: 40 },
+    // predecessor/successor. Note: PROC's rolled-up duration is computed in
+    // PROC's own (default, site) calendar, even though E itself runs 24/7.
+    {
+      id: 'E',
+      name: 'Equipment Procurement',
+      durationHours: 80,
+      calendarId: 'procurement',
+      parentId: 'PROC',
+    },
+    { id: 'F', name: 'Site Preparation', durationHours: 32, parentId: 'PROC' },
+    { id: 'G', name: 'Construction & Installation', durationHours: 96, parentId: 'PROC' },
+    { id: 'H', name: 'Commissioning & Handover', durationHours: 40, parentId: 'PROC' },
   ],
   dependencies: [
     { id: 'd1', predecessorId: 'A', successorId: 'B', type: 'FS' },

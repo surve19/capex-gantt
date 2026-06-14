@@ -12,6 +12,10 @@ export const HEADER_HEIGHT = 50;
 export const MIN_PX_PER_DAY = 8;
 export const MAX_PX_PER_DAY = 80;
 export const DEFAULT_PX_PER_DAY = 32;
+/** Per-depth-level indentation (px) for WBS tree rows in the grid's name column. */
+export const INDENT_PX = 16;
+/** Smallest width (px) a grid column can be resized to. */
+export const MIN_COLUMN_WIDTH = 40;
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 

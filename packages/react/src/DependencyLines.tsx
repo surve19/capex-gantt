@@ -1,9 +1,10 @@
 import type { Dependency, Task } from '@capex-gantt/core';
 import { useMemo } from 'react';
+import type { TaskTreeNode } from './hierarchy.js';
 import type { TimeScale } from './useTimeScale.js';
 
 export interface DependencyLinesProps {
-  tasks: Task[];
+  nodes: TaskTreeNode[];
   dependencies: Dependency[];
   scale: TimeScale;
   rowHeight: number;
@@ -12,16 +13,16 @@ export interface DependencyLinesProps {
 const MIN_ELBOW_OFFSET = 12;
 
 /** SVG overlay drawing dependency arrows between task bars, routed per dependency type (FS/SS/FF/SF). */
-export function DependencyLines({ tasks, dependencies, scale, rowHeight }: DependencyLinesProps) {
+export function DependencyLines({ nodes, dependencies, scale, rowHeight }: DependencyLinesProps) {
   const taskIndexById = useMemo(() => {
     const map = new Map<string, { task: Task; index: number }>();
-    tasks.forEach((task, index) => {
+    nodes.forEach(({ task }, index) => {
       map.set(task.id, { task, index });
     });
     return map;
-  }, [tasks]);
+  }, [nodes]);
 
-  const height = tasks.length * rowHeight;
+  const height = nodes.length * rowHeight;
 
   return (
     <svg

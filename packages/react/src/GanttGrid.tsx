@@ -1,86 +1,108 @@
-import { type Calendar, type Task, toISODateString } from '@capex-gantt/core';
+import type { Calendar } from '@capex-gantt/core';
+import type { MouseEvent as ReactMouseEvent } from 'react';
+import type { GanttColumn, GanttColumnContext, GanttLabels } from './columns.js';
+import { startHorizontalDrag } from './dragResize.js';
+import type { TaskTreeNode } from './hierarchy.js';
 import { HEADER_HEIGHT } from './layout.js';
 
 export interface GanttGridProps {
-  tasks: Task[];
+  nodes: TaskTreeNode[];
   rowHeight: number;
   /** Project calendars, used to label tasks scheduled on a non-default calendar. */
   calendars?: Calendar[];
   /** The project's default calendar id. Tasks using it show no calendar badge. */
   defaultCalendarId?: string;
+  /** Ids of summary tasks whose children are currently hidden. */
+  collapsedIds: Set<string>;
+  /** Toggles whether `taskId`'s children are hidden. */
+  onToggleCollapse: (taskId: string) => void;
+  columns: GanttColumn[];
+  /** Current width (px) of each column, keyed by `column.id`. */
+  columnWidths: Record<string, number>;
+  /** Called with `(columnId, delta)` while a column's resize handle is dragged. */
+  onColumnResize: (columnId: string, delta: number) => void;
+  formatDate: (date: Date) => string;
+  labels: GanttLabels;
 }
 
-function formatConstraint(constraint: NonNullable<Task['constraint']>): string {
-  return `${constraint.type} ${toISODateString(constraint.date)}`;
-}
+/** Left-hand task table: renders `columns` as header/body cells, with resize handles and WBS-tree row state. */
+export function GanttGrid({
+  nodes,
+  rowHeight,
+  calendars = [],
+  defaultCalendarId,
+  collapsedIds,
+  onToggleCollapse,
+  columns,
+  columnWidths,
+  onColumnResize,
+  formatDate,
+  labels,
+}: GanttGridProps) {
+  const getWidth = (column: GanttColumn): number => columnWidths[column.id] ?? column.width ?? 100;
 
-/** Left-hand task table: name, duration, computed dates, calendar, and constraint badges. */
-export function GanttGrid({ tasks, rowHeight, calendars = [], defaultCalendarId }: GanttGridProps) {
-  const calendarNameById = new Map(calendars.map((calendar) => [calendar.id, calendar.name]));
+  const startResize = (event: ReactMouseEvent<HTMLButtonElement>, columnId: string) => {
+    startHorizontalDrag(event, (delta) => onColumnResize(columnId, delta));
+  };
 
   return (
     <div className="cg-grid">
       <div className="cg-grid__row cg-grid__row--header" style={{ height: HEADER_HEIGHT }}>
-        <div className="cg-grid__cell cg-grid__cell--name">Task Name</div>
-        <div className="cg-grid__cell cg-grid__cell--duration">Duration</div>
-        <div className="cg-grid__cell cg-grid__cell--date">Start</div>
-        <div className="cg-grid__cell cg-grid__cell--date">Finish</div>
-        <div className="cg-grid__cell cg-grid__cell--float">Float</div>
-        <div className="cg-grid__cell cg-grid__cell--calendar">Calendar</div>
-        <div className="cg-grid__cell cg-grid__cell--constraint">Constraint</div>
+        {columns.map((column) => (
+          <div
+            key={column.id}
+            className={['cg-grid__cell', `cg-grid__cell--${column.id}`, column.className]
+              .filter(Boolean)
+              .join(' ')}
+            style={{
+              width: getWidth(column),
+              textAlign: column.align ?? 'left',
+              position: 'relative',
+            }}
+          >
+            {column.header}
+            {(column.resizable ?? true) && (
+              <button
+                type="button"
+                className="cg-grid__resize-handle"
+                aria-label={`Resize ${String(column.header)} column`}
+                onMouseDown={(event) => startResize(event, column.id)}
+              />
+            )}
+          </div>
+        ))}
       </div>
-      {tasks.map((task) => {
+      {nodes.map(({ task, depth }) => {
         const rowClasses = ['cg-grid__row'];
         if (task.isCritical) rowClasses.push('cg-grid__row--critical');
         if (task.isConstraintViolated) rowClasses.push('cg-grid__row--violated');
+        if (task.isSummary) rowClasses.push('cg-grid__row--summary');
 
-        const usesNonDefaultCalendar = !!task.calendarId && task.calendarId !== defaultCalendarId;
+        const ctx: GanttColumnContext = {
+          depth,
+          calendars,
+          defaultCalendarId,
+          formatDate,
+          labels,
+          isCollapsed: collapsedIds.has(task.id),
+          onToggleCollapse: () => onToggleCollapse(task.id),
+        };
 
         return (
           <div key={task.id} className={rowClasses.join(' ')} style={{ height: rowHeight }}>
-            <div className="cg-grid__cell cg-grid__cell--name" title={task.name}>
-              {task.name}
-            </div>
-            <div className="cg-grid__cell cg-grid__cell--duration">{task.durationHours}h</div>
-            <div className="cg-grid__cell cg-grid__cell--date">
-              {task.start ? toISODateString(task.start) : '-'}
-            </div>
-            <div className="cg-grid__cell cg-grid__cell--date">
-              {task.end ? toISODateString(task.end) : '-'}
-            </div>
-            <div className="cg-grid__cell cg-grid__cell--float">
-              {task.totalFloatHours === undefined ? '-' : Math.round(task.totalFloatHours)}
-            </div>
-            <div className="cg-grid__cell cg-grid__cell--calendar">
-              {usesNonDefaultCalendar && (
-                <span
-                  className="cg-badge cg-badge--calendar"
-                  title={`Calendar: ${task.calendarId}`}
-                >
-                  {calendarNameById.get(task.calendarId as string) ?? task.calendarId}
-                </span>
-              )}
-            </div>
-            <div className="cg-grid__cell cg-grid__cell--constraint">
-              {task.constraint && (
-                <span
-                  className={`cg-badge ${task.isConstraintViolated ? 'cg-badge--violation' : 'cg-badge--constraint'}`}
-                  title={
-                    task.isConstraintViolated
-                      ? 'Constraint not met: negative float'
-                      : 'Scheduling constraint'
-                  }
-                >
-                  {task.isConstraintViolated ? '⚠ ' : ''}
-                  {formatConstraint(task.constraint)}
-                </span>
-              )}
-              {!task.constraint && task.isConstraintViolated && (
-                <span className="cg-badge cg-badge--violation" title="Negative total float">
-                  ⚠ Violated
-                </span>
-              )}
-            </div>
+            {columns.map((column) => (
+              <div
+                key={column.id}
+                className={['cg-grid__cell', `cg-grid__cell--${column.id}`, column.className]
+                  .filter(Boolean)
+                  .join(' ')}
+                style={{ width: getWidth(column), textAlign: column.align ?? 'left' }}
+              >
+                {column.render
+                  ? column.render(task, ctx)
+                  : String((task as unknown as Record<string, unknown>)[column.id] ?? '-')}
+              </div>
+            ))}
           </div>
         );
       })}
